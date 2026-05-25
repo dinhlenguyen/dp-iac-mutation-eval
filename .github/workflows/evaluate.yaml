@@ -25,10 +25,12 @@ jobs:
 
     steps:
       # -----------------------------
-      # CHECKOUT CODE
+      # CHECKOUT CODE (BASELINE)
       # -----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       # -----------------------------
       # WAIT FOR LOCALSTACK BASIC HEALTH
@@ -87,6 +89,19 @@ jobs:
       - name: Terraform Apply Baseline
         working-directory: infra
         run: timeout 120 terraform apply -auto-approve
+      
+      # -----------------------------
+      # CHECKOUT CODE (PR)
+      # -----------------------------
+      - name: Checkout PR branch (mutation)
+        uses: actions/checkout@v4
+      
+      # -----------------------------
+      # TERRAFORM RE-INIT
+      # -----------------------------
+      - name: Re-init Terraform (keep state)
+        working-directory: infra
+        run: terraform init -reconfigure
 
       # -----------------------------
       # TERRAFORM PLAN → JSON
