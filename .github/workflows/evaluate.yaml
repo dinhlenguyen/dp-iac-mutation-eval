@@ -1,16 +1,15 @@
 name: IaC Mutation Evaluation (LocalStack)
 
 on:
-  push:
   pull_request:
-
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
 
     services:
       localstack:
-        image: localstack/localstack:latest
+        image: localstack/localstack:3.0.2
         ports:
           - 4566:4566
         env:
