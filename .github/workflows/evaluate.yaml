@@ -3,6 +3,7 @@ name: IaC Mutation Evaluation (LocalStack)
 on:
   pull_request:
   workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -20,23 +21,27 @@ jobs:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
-      AWS_ENDPOINT_URL: http://localhost:4566
 
     steps:
-      - name: Checkout code
+      # -----------------------------
+      # CHECKOUT BASELINE (main)
+      # -----------------------------
+      - name: Checkout baseline (main)
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       # -----------------------------
       # WAIT FOR LOCALSTACK
       # -----------------------------
-      - name: Wait for LocalStack to be ready
+      - name: Wait for LocalStack
         run: |
           for i in {1..30}; do
             curl -s http://localhost:4566/_localstack/health && echo "LocalStack ready" && exit 0
             echo "Waiting for LocalStack..."
             sleep 2
           done
-          echo "LocalStack failed to start"
+          echo "LocalStack failed"
           exit 1
 
       # -----------------------------
@@ -50,11 +55,25 @@ jobs:
         run: terraform init
 
       # -----------------------------
-      # TERRAFORM PLAN → JSON
+      # BASELINE APPLY (LANDING ZONE STATE)
+      # -----------------------------
+      - name: Terraform Apply Baseline
+        working-directory: infra
+        run: terraform apply -auto-approve
+
+      # -----------------------------
+      # SWITCH TO PR (AI MUTATION)
+      # -----------------------------
+      - name: Checkout PR branch (mutation)
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # PLAN (DIFF AGAINST BASELINE)
       # -----------------------------
       - name: Terraform Plan
         working-directory: infra
         run: |
+          terraform init
           terraform plan -out=tfplan
           terraform show -json tfplan > ../plan.json
 
