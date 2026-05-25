@@ -1,0 +1,72 @@
+name: IaC Mutation Evaluation (LocalStack)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      localstack:
+        image: localstack/localstack:latest
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: ec2,iam,sts
+          DEBUG: 1
+
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localhost:4566
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # WAIT FOR LOCALSTACK
+      # -----------------------------
+      - name: Wait for LocalStack to be ready
+        run: |
+          for i in {1..30}; do
+            curl -s http://localhost:4566/_localstack/health && echo "LocalStack ready" && exit 0
+            echo "Waiting for LocalStack..."
+            sleep 2
+          done
+          echo "LocalStack failed to start"
+          exit 1
+
+      # -----------------------------
+      # TERRAFORM SETUP
+      # -----------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init
+
+      # -----------------------------
+      # TERRAFORM PLAN → JSON
+      # -----------------------------
+      - name: Terraform Plan
+        working-directory: infra
+        run: |
+          terraform plan -out=tfplan
+          terraform show -json tfplan > ../plan.json
+
+      # -----------------------------
+      # PYTHON EVALUATION
+      # -----------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Evaluator
+        run: |
+          python3 evaluator.py plan.json scenarios/scenario.json

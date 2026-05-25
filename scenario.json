@@ -1,0 +1,19 @@
+{
+  "scenario_name": "ec2_multi_attribute_update",
+
+  "intent": {
+    "resource_type": "aws_instance",
+    "changes": [
+      {
+        "attribute": "instance_type",
+        "from": "t2.micro",
+        "to": "t3.micro"
+      },
+      {
+        "attribute": "tags.env",
+        "from": "dev",
+        "to": "prod"
+      }
+    ]
+  }
+}
