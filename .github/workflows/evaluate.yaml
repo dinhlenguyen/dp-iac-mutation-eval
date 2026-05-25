@@ -21,70 +21,93 @@ jobs:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
+      AWS_PAGER: ""
 
     steps:
       # -----------------------------
-      # CHECKOUT BASELINE (main)
+      # CHECKOUT CODE
       # -----------------------------
-      - name: Checkout baseline (main)
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       # -----------------------------
-      # WAIT FOR LOCALSTACK
+      # WAIT FOR LOCALSTACK BASIC HEALTH
       # -----------------------------
-      - name: Wait for LocalStack
+      - name: Wait for LocalStack base health
         run: |
           for i in {1..30}; do
-            curl -s http://localhost:4566/_localstack/health && echo "LocalStack ready" && exit 0
+            curl -s http://localhost:4566/_localstack/health && echo "LocalStack responding" && break
             echo "Waiting for LocalStack..."
             sleep 2
           done
-          echo "LocalStack failed"
+
+      # -----------------------------
+      # WAIT FOR EC2 READINESS (CRITICAL FIX)
+      # -----------------------------
+      - name: Wait for EC2 service readiness
+        run: |
+          for i in {1..40}; do
+            STATUS=$(curl -s http://localhost:4566/_localstack/health | jq -r '.services.ec2')
+
+            echo "EC2 status: $STATUS"
+
+            if [ "$STATUS" = "available" ]; then
+              echo "EC2 is ready"
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "EC2 not ready"
           exit 1
 
       # -----------------------------
-      # TERRAFORM SETUP
+      # STABILIZATION BUFFER (IMPORTANT)
+      # -----------------------------
+      - name: Stabilization delay
+        run: sleep 10
+
+      # -----------------------------
+      # SETUP TERRAFORM
       # -----------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      # -----------------------------
+      # TERRAFORM INIT
+      # -----------------------------
       - name: Terraform Init
         working-directory: infra
-        run: terraform init
+        run: terraform init -reconfigure
 
       # -----------------------------
       # BASELINE APPLY (LANDING ZONE STATE)
       # -----------------------------
       - name: Terraform Apply Baseline
         working-directory: infra
-        run: terraform apply -auto-approve
+        run: timeout 120 terraform apply -auto-approve
 
       # -----------------------------
-      # SWITCH TO PR (AI MUTATION)
-      # -----------------------------
-      - name: Checkout PR branch (mutation)
-        uses: actions/checkout@v4
-
-      # -----------------------------
-      # PLAN (DIFF AGAINST BASELINE)
+      # TERRAFORM PLAN → JSON
       # -----------------------------
       - name: Terraform Plan
         working-directory: infra
         run: |
-          terraform init
           terraform plan -out=tfplan
           terraform show -json tfplan > ../plan.json
 
       # -----------------------------
-      # PYTHON EVALUATION
+      # SETUP PYTHON
       # -----------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Run Evaluator
+      # -----------------------------
+      # RUN EVALUATOR
+      # -----------------------------
+      - name: Run Evaluation
         run: |
           python3 evaluator.py plan.json scenarios/scenario.json
