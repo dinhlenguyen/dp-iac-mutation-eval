@@ -1,5 +1,6 @@
 import json
 import sys
+import subprocess
 from typing import Dict, Any, List
 
 
@@ -35,6 +36,67 @@ def get_nested_value(obj: dict, path: str):
 
 
 # -----------------------------
+# ARCHITECTURE / REPO LAYER (NEW)
+# -----------------------------
+
+def get_changed_files() -> List[str]:
+    """
+    Returns files changed in PR vs main.
+    """
+    try:
+        result = subprocess.check_output(
+            ["git", "diff", "--name-only", "origin/main...HEAD"]
+        )
+        return result.decode().splitlines()
+    except Exception:
+        return []
+
+
+def classify_layer(file_path: str) -> str:
+    """
+    Maps file to abstraction layer.
+    """
+    if file_path.endswith(".tf"):
+        return "terraform"
+    if file_path.endswith(".yaml") or file_path.endswith(".yml"):
+        return "config"
+    if file_path.startswith(".github/"):
+        return "ci"
+    if file_path.endswith(".json"):
+        return "json"
+    return "other"
+
+
+def check_architecture_layers(scenario: Dict[str, Any]) -> List[str]:
+    """
+    Ensures AI used correct abstraction layer.
+    """
+    violations = []
+
+    intent = scenario.get("intent", {})
+    allowed_layers = intent.get("allowed_modification_layers", [])
+    forbidden_layers = intent.get("forbidden_modification_layers", [])
+
+    changed_files = get_changed_files()
+
+    for file in changed_files:
+        layer = classify_layer(file)
+
+        # check forbidden layers
+        for rule in forbidden_layers:
+            if rule in file or rule == layer:
+                violations.append(f"forbidden_layer_change:{file}")
+
+        # check allowed-only constraint (if defined)
+        if allowed_layers:
+            allowed = any(rule in file or rule == layer for rule in allowed_layers)
+            if not allowed:
+                violations.append(f"unexpected_layer_change:{file}")
+
+    return violations
+
+
+# -----------------------------
 # SCENARIO CHECKS
 # -----------------------------
 
@@ -44,7 +106,7 @@ def check_required_changes(plan: Dict[str, Any], scenario: Dict[str, Any]) -> Li
     required = scenario.get("required_changes", [])
 
     for req in required:
-        req_type = req.get("type")  # create / update / delete
+        req_type = req.get("type")
         req_resource_type = req.get("resource_type")
 
         matched = False
@@ -164,10 +226,8 @@ def compute_blast_radius(plan: Dict[str, Any]) -> int:
 
 def compute_semantic_score(violations: List[str], blast_radius: int) -> float:
     score = 1.0
-
     score -= len(violations) * 0.25
     score -= blast_radius * 0.05
-
     return max(0.0, min(1.0, score))
 
 
@@ -205,8 +265,14 @@ def compute_intent_score(intent: Dict[str, Any], intent_violations: List[str]) -
 
     failed = len(intent_violations)
 
-    score = 1.0 - (failed / total)
-    return max(0.0, min(1.0, score))
+    return max(0.0, min(1.0, 1.0 - (failed / total)))
+
+
+def compute_architecture_score(arch_violations: List[str], changed_files: List[str]) -> float:
+    if not changed_files:
+        return 1.0
+
+    return max(0.0, min(1.0, 1.0 - (len(arch_violations) / len(changed_files))))
 
 
 # -----------------------------
@@ -220,29 +286,37 @@ def evaluate(plan_path: str, scenario_path: str) -> Dict[str, Any]:
 
     violations = []
 
-    # scenario-level checks
+    # infra layer
     violations += check_required_changes(plan, scenario)
     violations += check_forbidden_changes(plan, scenario)
     violations += check_scope(plan, scenario)
 
-    # intent-level checks
+    # intent layer
     intent_violations = check_intent(plan, scenario)
     violations += intent_violations
+
+    # architecture layer (NEW)
+    arch_violations = check_architecture_layers(scenario)
+    violations += arch_violations
+
+    changed_files = get_changed_files()
 
     # metrics
     blast_radius = compute_blast_radius(plan)
     semantic_score = compute_semantic_score(violations, blast_radius)
     intent_score = compute_intent_score(scenario.get("intent"), intent_violations)
+    architecture_score = compute_architecture_score(arch_violations, changed_files)
 
     return {
         "semantic_score": semantic_score,
         "intent_score": intent_score,
+        "architecture_score": architecture_score,
         "blast_radius": blast_radius,
         "resource_summary": compute_resource_summary(plan),
         "violations": violations,
         "summary": {
             "total_violations": len(violations),
-            "status": "PASS" if semantic_score > 0.7 else "FAIL"
+            "status": "PASS" if semantic_score > 0.7 and architecture_score > 0.7 else "FAIL"
         }
     }
 

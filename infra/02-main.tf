@@ -1,6 +1,6 @@
 resource "aws_instance" "demo" {
-  ami           = "ami-12345678"
-  instance_type = "t2.micro"
+  ami           = var.ami_id
+  instance_type = var.instance_type
 
   tags = {
     Name = "localstack-demo-instance"

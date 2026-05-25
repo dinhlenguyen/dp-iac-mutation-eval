@@ -1,5 +1,5 @@
 {
-  "scenario_name": "ec2_multi_attribute_update",
+  "scenario_name": "ec2_multi_attribute_update_with_architecture_guardrail",
 
   "intent": {
     "resource_type": "aws_instance",
@@ -15,5 +15,52 @@
         "to": "prod"
       }
     ]
+  },
+
+  "architecture_constraints": {
+    "allowed_mechanism": [
+      "config_file_update",
+      "variable_update",
+      "yaml_change"
+    ],
+
+    "forbidden_mechanism": [
+      "new_terraform_resource",
+      "policy_as_code_bypass",
+      "duplicate_infrastructure",
+      "inline_hardcoded_override"
+    ],
+
+    "enforcement_scope": [
+      "terraform"
+    ]
+  },
+
+  "repo_structure_rules": {
+    "preferred_config_sources": [
+      "terraform.tfvars",
+      "config.yaml",
+      "values.yaml",
+      "variables.tf"
+    ],
+
+    "forbidden_paths_for_this_change": [
+      "infra/policies/",
+      "infra/modules/security_addons/",
+      "infra/iam/"
+    ]
+  },
+
+  "anti_bruteforce_rules": {
+    "must_not_introduce_resources": [
+      "aws_iam_policy",
+      "aws_iam_role",
+      "aws_s3_bucket_policy",
+      "aws_security_group_rule"
+    ],
+
+    "expected_change_style": "modify_existing_parameter_only",
+
+    "reasoning_hint": "This is a parameter update, not a new capability requirement"
   }
 }
