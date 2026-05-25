@@ -96,6 +96,41 @@ def check_architecture_layers(scenario: Dict[str, Any]) -> List[str]:
     return violations
 
 
+def check_preferred_config_sources(scenario: Dict[str, Any]) -> List[str]:
+    """
+    Ensures changes are made only to preferred config sources.
+    """
+    violations = []
+
+    repo_rules = scenario.get("repo_structure_rules", {})
+    preferred_sources = repo_rules.get("preferred_config_sources", [])
+    forbidden_paths = repo_rules.get("forbidden_paths_for_this_change", [])
+
+    if not preferred_sources:
+        return violations
+
+    changed_files = get_changed_files()
+
+    for file in changed_files:
+        # Check if file is in forbidden paths
+        for forbidden_path in forbidden_paths:
+            if file.startswith(forbidden_path):
+                violations.append(f"forbidden_path_modified:{file}")
+                continue
+
+        # Check if file matches preferred config sources
+        is_preferred = False
+        for preferred in preferred_sources:
+            if preferred in file:
+                is_preferred = True
+                break
+
+        if not is_preferred:
+            violations.append(f"non_preferred_config_modified:{file}")
+
+    return violations
+
+
 # -----------------------------
 # SCENARIO CHECKS
 # -----------------------------
@@ -298,6 +333,11 @@ def evaluate(plan_path: str, scenario_path: str) -> Dict[str, Any]:
     # architecture layer (NEW)
     arch_violations = check_architecture_layers(scenario)
     violations += arch_violations
+    
+    # check preferred config sources
+    config_violations = check_preferred_config_sources(scenario)
+    violations += config_violations
+    arch_violations += config_violations
 
     changed_files = get_changed_files()
 
