@@ -24,105 +24,97 @@ jobs:
       AWS_PAGER: ""
 
     steps:
-      # -----------------------------
-      # CHECKOUT CODE (BASELINE)
-      # -----------------------------
+
+      # =========================================================
+      # 1. CHECKOUT REPO (we will switch branches manually)
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          fetch-depth: 0
 
-      # -----------------------------
-      # WAIT FOR LOCALSTACK BASIC HEALTH
-      # -----------------------------
-      - name: Wait for LocalStack base health
+      # =========================================================
+      # 2. WAIT FOR LOCALSTACK
+      # =========================================================
+      - name: Wait for LocalStack
         run: |
-          for i in {1..30}; do
-            curl -s http://localhost:4566/_localstack/health && echo "LocalStack responding" && break
+          for i in {1..40}; do
+            if curl -s http://localhost:4566/_localstack/health | jq -e '.services.ec2 == "available"' >/dev/null; then
+              echo "LocalStack ready"
+              exit 0
+            fi
             echo "Waiting for LocalStack..."
             sleep 2
           done
-
-      # -----------------------------
-      # WAIT FOR EC2 READINESS (CRITICAL FIX)
-      # -----------------------------
-      - name: Wait for EC2 service readiness
-        run: |
-          for i in {1..40}; do
-            STATUS=$(curl -s http://localhost:4566/_localstack/health | jq -r '.services.ec2')
-
-            echo "EC2 status: $STATUS"
-
-            if [ "$STATUS" = "available" ]; then
-              echo "EC2 is ready"
-              exit 0
-            fi
-
-            sleep 2
-          done
-
-          echo "EC2 not ready"
+          echo "LocalStack not ready"
           exit 1
 
-      # -----------------------------
-      # STABILIZATION BUFFER (IMPORTANT)
-      # -----------------------------
-      - name: Stabilization delay
+      - name: Stabilization buffer
         run: sleep 10
 
-      # -----------------------------
-      # SETUP TERRAFORM
-      # -----------------------------
+      # =========================================================
+      # 3. SETUP TERRAFORM
+      # =========================================================
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # -----------------------------
-      # TERRAFORM INIT
-      # -----------------------------
-      - name: Terraform Init
+      # =========================================================
+      # 4. FORCE CLEAN BASELINE STATE (CRITICAL FIX)
+      # =========================================================
+      - name: Reset Terraform state (clean baseline)
         working-directory: infra
-        run: terraform init -reconfigure
+        run: |
+          rm -rf .terraform
+          rm -f terraform.tfstate terraform.tfstate.backup || true
+          terraform init -reconfigure
 
-      # -----------------------------
-      # BASELINE APPLY (LANDING ZONE STATE)
-      # -----------------------------
-      - name: Terraform Apply Baseline
-        working-directory: infra
-        run: timeout 120 terraform apply -auto-approve
-      
-      # -----------------------------
-      # CHECKOUT CODE (PR)
-      # -----------------------------
-      - name: Checkout PR branch (mutation)
-        uses: actions/checkout@v4
-      
-      # -----------------------------
-      # TERRAFORM RE-INIT
-      # -----------------------------
-      - name: Re-init Terraform (keep state)
-        working-directory: infra
-        run: terraform init -reconfigure
+      # =========================================================
+      # 5. CHECKOUT MAIN (BASELINE DEFINITION)
+      # =========================================================
+      - name: Checkout MAIN branch (baseline)
+        run: |
+          git checkout main
 
-      # -----------------------------
-      # TERRAFORM PLAN → JSON
-      # -----------------------------
-      - name: Terraform Plan
+      # =========================================================
+      # 6. APPLY BASELINE (ALWAYS FRESH)
+      # =========================================================
+      - name: Apply baseline (clean state)
+        working-directory: infra
+        run: |
+          terraform apply -auto-approve
+
+      # =========================================================
+      # 7. CHECKOUT PR BRANCH (MUTATION)
+      # =========================================================
+      - name: Checkout PR branch
+        run: |
+          git checkout ${{ github.head_ref || github.ref_name }}
+
+      # =========================================================
+      # 8. RE-INIT TERRAFORM (SAME STATE, SAME BACKEND)
+      # =========================================================
+      - name: Re-init Terraform
+        working-directory: infra
+        run: |
+          terraform init -reconfigure
+
+      # =========================================================
+      # 9. PLAN MUTATION
+      # =========================================================
+      - name: Terraform Plan → JSON
         working-directory: infra
         run: |
           terraform plan -out=tfplan
           terraform show -json tfplan > ../plan.json
 
-      # -----------------------------
-      # SETUP PYTHON
-      # -----------------------------
+      # =========================================================
+      # 10. RUN EVALUATOR
+      # =========================================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # -----------------------------
-      # RUN EVALUATOR
-      # -----------------------------
-      - name: Run Evaluation
+      - name: Run evaluator
         run: |
           python3 evaluator.py plan.json scenarios/scenario.json
